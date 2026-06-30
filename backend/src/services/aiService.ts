@@ -26,11 +26,12 @@ export async function uploadFileToAIService(
 export async function queryDocumentFromAIService(
   documentId: string,
   question: string,
+  history: any,
 ): Promise<{ answer: string }> {
-  console.log(documentId, question);
   const response = await axios.post(`${AI_SERVICE_URL}/query`, {
     document_id: documentId,
     question,
+    history,
   });
 
   return response.data;

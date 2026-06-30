@@ -38,13 +38,27 @@ export async function queryStudyMaterial(
 ) {
   const { docId, question } = request.body;
 
-  // Cast as any so TypeScript understands 'externalId' exists on the found object
   const doc = (await documentModel.findByPk(docId)) as any;
   if (!doc) {
     return reply.status(404).send({ error: "Document not found" });
   }
 
-  const aiResponse = await queryDocumentFromAIService(doc.externalId, question);
+  const databaseHistory = await messageModel.findAll({
+    where: { document_id: String(docId) },
+    order: [["createdAt", "DESC"]],
+    limit: 4,
+  });
+
+  const historyPayload = databaseHistory.reverse().map((msg: any) => ({
+    role: msg.role,
+    content: msg.content,
+  }));
+
+  const aiResponse = await queryDocumentFromAIService(
+    doc.externalId,
+    question,
+    historyPayload,
+  );
 
   await messageModel.create({
     document_id: docId,
@@ -71,6 +85,9 @@ export async function getAllDocuments(
   return reply.send(docs);
 }
 
+/**
+ * Fetches all the chats for a specific document
+ */
 export async function getMessagesForDocument(
   request: FastifyRequest<{ Params: { docId: string } }>,
   reply: FastifyReply,

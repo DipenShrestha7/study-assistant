@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   fetchAllDocuments,
   uploadStudyDocument,
@@ -17,12 +17,21 @@ interface ChatMessage {
 
 export default function App() {
   // State elements mapped directly to our procedural data flows
+  const messagesEndRef = useRef<HTMLDivElement>(null);
   const [documents, setDocuments] = useState<StudyDocument[]>([]);
   const [selectedDocId, setSelectedDocId] = useState<number | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [question, setQuestion] = useState("");
   const [uploading, setUploading] = useState(false);
   const [loadingAnswer, setLoadingAnswer] = useState(false);
+
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  };
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages]);
 
   // Synchronize component mounting with active database records
   useEffect(() => {
@@ -166,6 +175,7 @@ export default function App() {
                       {msg.text}
                     </ReactMarkdown>
                   </div>
+                  <div ref={messagesEndRef} />
                 </div>
               ))}
 
