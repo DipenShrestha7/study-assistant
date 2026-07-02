@@ -6,18 +6,18 @@ from pydantic import BaseModel, Field, AliasChoices
 from dotenv import load_dotenv
 from typing import List, Dict, Optional
 
-# 1. Force environment variables to load BEFORE anything else compiles
 load_dotenv()
 
-# 2. Safely import LangChain components
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
 from langchain_chroma import Chroma
-from langchain_classic.chains import create_retrieval_chain, create_history_aware_retriever
-from langchain_classic.chains.combine_documents import create_stuff_documents_chain
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import HumanMessage, AIMessage
+from langchain_tavily import TavilySearch
+from langchain_core.tools import Tool
+
+from langchain_classic.agents import AgentExecutor, create_tool_calling_agent
 
 app = FastAPI(title="AI Study Assistant Vector Service")
 CHROMA_DIR = os.path.join(os.path.dirname(__file__), "chroma_db")
@@ -80,16 +80,50 @@ async def handle_document_query(payload: QueryRequest):
     """
     llm = ChatOpenAI(
         openai_api_base="https://openrouter.ai/api/v1",
-        model="openai/gpt-oss-120b:free",
+        model="openai/gpt-4o-mini",  # Note: ensure your model explicitly supports OpenAI Tool Calling
         openai_api_key=os.getenv("OPENROUTER_API_KEY"),
         temperature=0.7,
     )
     
-    # Uses the exact same shared embedding engine instance
     db = Chroma(persist_directory=CHROMA_DIR, embedding_function=embeddings)
     retriever = db.as_retriever(
-        search_kwargs={"filter": {"document_id": payload.document_id}, "k": 4}
+        search_kwargs={"filter": {"document_id": payload.document_id}, "k": 3}
     )
+
+    def search_local_pdf(query: str) -> str:
+        docs = retriever.invoke(query)
+        return "\n\n".join([doc.page_content for doc in docs])
+    
+    pdf_tool = Tool(
+        name="Document_Search",
+        func=search_local_pdf,
+        description="CRITICAL: Use this tool first for any academic questions regarding the specific uploaded course syllabus, document, textbook, or file material."
+    )
+
+    web_tool = TavilySearch(max_results=2)
+    tools = [pdf_tool, web_tool]
+
+    system_prompt = (
+        "You are an expert, proactive study assistant. A study guide/PDF is ALREADY uploaded "
+        "and active in the current session. Whenever the user says 'this file', 'the document', "
+        "or asks you to explain the material, you MUST immediately invoke the 'Document_Search' tool "
+        "using relevant keywords from their query to see what content is inside.\n\n"
+        
+        "CRITICAL ROUTING INSTRUCTIONS:\n"
+        "1. Do not ask the user to upload a file—one is already available via the 'Document_Search' tool.\n"
+        "2. If 'Document_Search' returns empty or insufficient context, immediately invoke 'TavilySearch' "
+        "   to look up web explanations for the topic so you never leave the student empty-handed."
+    )
+    
+    agent_prompt = ChatPromptTemplate.from_messages([
+        ("system", system_prompt),
+        MessagesPlaceholder("chat_history"),
+        ("human", "{input}"),
+        MessagesPlaceholder("agent_scratchpad"), 
+    ])
+
+    agent = create_tool_calling_agent(llm, tools, agent_prompt)
+    agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True)
     
     chat_history = []
     for turn in payload.history:
@@ -98,41 +132,12 @@ async def handle_document_query(payload: QueryRequest):
         else:
             chat_history.append(AIMessage(content=turn["content"]))
 
-    # 2. Contextualize Chain: Rewrites lazy prompts ("explain it more") into a clean search query
-    contextualize_q_system_prompt = (
-        "Given a chat history and the latest user question which might reference context in the chat history, "
-        "formulate a standalone question which can be understood without the chat history. "
-        "Do NOT answer the question, just reformulate it if needed and otherwise return it as is."
-    )
+    response = agent_executor.invoke({
+        "input": payload.question,
+        "chat_history": chat_history
+    })
     
-    contextualize_q_prompt = ChatPromptTemplate.from_messages([
-        ("system", contextualize_q_system_prompt),
-        MessagesPlaceholder("chat_history"),
-        ("human", "{input}"),
-    ])
-    
-    # Wraps your existing retriever to look at the history before querying Chroma
-    history_aware_retriever = create_history_aware_retriever(
-        llm, retriever, contextualize_q_prompt
-    )
-
-    system_prompt = (
-        "You are an expert study assistant. Use the following pieces of retrieved context "
-        "to answer the question. If you don't know the answer, say that you don't know.\n\n"
-        "{context}"
-    )
-    
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", system_prompt),
-        MessagesPlaceholder("chat_history"), # Injects history into final answer generation context
-        ("human", "{input}"),
-    ])
-    
-    question_answer_chain = create_stuff_documents_chain(llm, prompt)
-    rag_chain = create_retrieval_chain(history_aware_retriever, question_answer_chain)
-    
-    response = rag_chain.invoke({"input": payload.question,"chat_history": chat_history})
-    return {"answer": response["answer"]}
+    return {"answer": response["output"]}
 
 if __name__ == "__main__":
     import uvicorn
