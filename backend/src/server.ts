@@ -10,7 +10,12 @@ dotenv.config();
 const fastify = Fastify({ logger: true, bodyLimit: 52428800 }); // 50MB limit for file uploads
 
 // Bind necessary plugins sequentially
-await fastify.register(cors, { origin: "*" });
+await fastify.register(cors, {
+  origin: ["http://localhost:5173", "http://0.0.0.0:8000"],
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+  credentials: true,
+});
 await fastify.register(multipart);
 
 // Mount your procedural endpoint routes under the "/api" prefix

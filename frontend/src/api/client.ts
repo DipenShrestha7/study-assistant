@@ -34,17 +34,80 @@ export async function uploadStudyDocument(file: File): Promise<StudyDocument> {
 export async function queryDocumentContext(
   docId: number,
   question: string,
-): Promise<string> {
-  const response = await axios.post(`${API_BASE_URL}/query`, {
-    docId,
-    question,
+  onTokenReceived: (token: string) => void,
+): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/query`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ docId, question }),
   });
-  return response.data.answer;
+
+  if (!response.ok) {
+    throw new Error(`Server connection error: ${response.status}`);
+  }
+
+  const reader = response.body?.getReader();
+  const decoder = new TextDecoder("utf-8");
+
+  if (!reader) {
+    throw new Error("ReadableStream not supported on this response channel.");
+  }
+
+  // 1. Maintain a persistent data stream buffer
+  let assemblyBuffer = "";
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+
+    // 2. Add raw data to our assembly stream
+    assemblyBuffer += decoder.decode(value, { stream: true });
+
+    // 3. Break the string down whenever a newline occurs
+    let lines = assemblyBuffer.split("\n");
+
+    // 4. Leave the last incomplete line fragment in the buffer for the next chunk
+    assemblyBuffer = lines.pop() || "";
+
+    // 5. Evaluate every complete line built so far
+    for (let i = 0; i < lines.length; i++) {
+      const currentLine = lines[i];
+      const trimmedLine = currentLine.trim();
+
+      // Skip the line entirely if it is an internal log statement
+      if (
+        trimmedLine.startsWith("LOG:") ||
+        trimmedLine.startsWith("__LOG__:") ||
+        trimmedLine.includes("Context verified successfully")
+      ) {
+        console.log("Filtered System Log:", trimmedLine); // Stays in dev tools console
+        continue;
+      }
+
+      // 6. Send the clean line string down to React, appending the newline back
+      // so your paragraph styling remains intact.
+      onTokenReceived(currentLine + "\n");
+    }
+  }
+
+  // 7. Flush any remaining text segment sitting in the buffer after stream closure
+  if (assemblyBuffer) {
+    const finalTrim = assemblyBuffer.trim();
+    if (
+      !finalTrim.startsWith("LOG:") &&
+      !finalTrim.startsWith("__LOG__:") &&
+      !finalTrim.includes("Context verified successfully")
+    ) {
+      onTokenReceived(assemblyBuffer);
+    }
+  }
 }
 
 export async function fetchMessagesForDocument(
   docId: number,
-): Promise<{ role: "user" | "assistant"; content: string }> {
+): Promise<{ role: "user" | "assistant"; content: string }[]> {
   const response = await axios.get(`${API_BASE_URL}/messages/${docId}`);
   return response.data;
 }

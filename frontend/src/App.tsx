@@ -77,18 +77,60 @@ export default function App() {
     if (!question.trim() || !selectedDocId) return;
 
     const userQueryText = question;
+
+    // 1. Only push the user's question to the chat history array at the start.
+    // DO NOT push an empty AI bubble here!
     setMessages((prev) => [...prev, { role: "user", text: userQueryText }]);
+
     setQuestion("");
-    setLoadingAnswer(true);
+    setLoadingAnswer(true); // Shows the "Analyzing study context..." box
 
     try {
-      const aiResponseText = await queryDocumentContext(
+      let isFirstToken = true;
+
+      await queryDocumentContext(
         selectedDocId,
         userQueryText,
+        (newChunkText) => {
+          // 2. When the first real text chunk arrives:
+          if (isFirstToken && newChunkText.trim() !== "") {
+            setLoadingAnswer(false); // Hide the loading box instantly
+            isFirstToken = false;
+
+            // Create the AI message block containing the first token right now
+            setMessages((prev) => [
+              ...prev,
+              { role: "ai", text: newChunkText },
+            ]);
+            return; // Exit out of this execution path for the first chunk
+          }
+
+          // 3. For all subsequent text chunks, append them immutably as normal
+          if (!isFirstToken) {
+            setMessages((prev) => {
+              const lastIndex = prev.length - 1;
+              if (lastIndex < 0) return prev;
+
+              const lastMessage = prev[lastIndex];
+
+              if (lastMessage && lastMessage.role === "ai") {
+                const updatedMessages = [...prev];
+                updatedMessages[lastIndex] = {
+                  ...lastMessage,
+                  text: lastMessage.text + newChunkText,
+                };
+                return updatedMessages;
+              }
+              return prev;
+            });
+          }
+        },
       );
-      setMessages((prev) => [...prev, { role: "ai", text: aiResponseText }]);
     } catch (err) {
       console.error("Query engine failed:", err);
+      setLoadingAnswer(false);
+
+      // If an error happens before any text arrives, append a clean error block
       setMessages((prev) => [
         ...prev,
         { role: "ai", text: "An error occurred while analyzing the document." },

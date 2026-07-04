@@ -36,6 +36,14 @@ export async function queryStudyMaterial(
   request: FastifyRequest<{ Body: { docId: number; question: string } }>,
   reply: FastifyReply,
 ) {
+  if (request.method === "OPTIONS") {
+    return reply
+      .status(204)
+      .header("Access-Control-Allow-Origin", "http://localhost:5173")
+      .header("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
+      .header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+      .send();
+  }
   const { docId, question } = request.body;
 
   const doc = (await documentModel.findByPk(docId)) as any;
@@ -54,24 +62,62 @@ export async function queryStudyMaterial(
     content: msg.content,
   }));
 
-  const aiResponse = await queryDocumentFromAIService(
-    doc.externalId,
-    question,
-    historyPayload,
-  );
+  try {
+    // 1. Fire the AI Service wrapper BEFORE saving anything to the DB
+    const aiResponseStream = await queryDocumentFromAIService(
+      doc.externalId,
+      question,
+      historyPayload,
+    );
 
-  await messageModel.create({
-    document_id: docId,
-    role: "user",
-    content: question,
-  });
+    reply.raw.setHeader("Content-Type", "text/plain");
+    reply.raw.setHeader("Cache-Control", "no-cache");
+    reply.raw.setHeader("Connection", "keep-alive");
+    reply.raw.setHeader("X-Accel-Buffering", "no");
 
-  await messageModel.create({
-    document_id: docId,
-    role: "assistant",
-    content: aiResponse.answer,
-  });
-  return reply.send({ answer: aiResponse.answer });
+    reply.raw.setHeader("Access-Control-Allow-Origin", "http://localhost:5173");
+    reply.raw.setHeader("Access-Control-Allow-Methods", "POST, GET, OPTIONS");
+    reply.raw.setHeader(
+      "Access-Control-Allow-Headers",
+      "Content-Type, Authorization",
+    );
+
+    let fullAssistantResponse = "";
+
+    aiResponseStream.on("data", (chunk: Buffer) => {
+      fullAssistantResponse += chunk.toString();
+    });
+
+    aiResponseStream.on("end", async () => {
+      try {
+        await messageModel.create({
+          document_id: docId,
+          role: "user",
+          content: question,
+        });
+
+        await messageModel.create({
+          document_id: docId,
+          role: "assistant",
+          content: fullAssistantResponse.trim(),
+        });
+      } catch (dbError) {
+        request.log.error({ err: dbError }, "Failed to save response:");
+      }
+    });
+
+    // Pipe the stream out to the frontend
+    aiResponseStream.pipe(reply.raw);
+    await reply;
+  } catch (error) {
+    request.log.error({ err: error }, "Streaming transaction failure:", {});
+
+    // 4. Because nothing was written to the DB yet, your database stays perfectly clean!
+    // Simply send an error status code to the frontend so your UI can display a toast notification.
+    return reply
+      .status(500)
+      .send({ error: "AI communication channel dropped" });
+  }
 }
 
 /**

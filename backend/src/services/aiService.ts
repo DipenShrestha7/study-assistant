@@ -1,5 +1,6 @@
 import axios from "axios";
 import FormData from "form-data";
+import { Readable } from "stream";
 
 const AI_SERVICE_URL = process.env.AI_SERVICE_URL || "http://localhost:8000";
 
@@ -27,12 +28,16 @@ export async function queryDocumentFromAIService(
   documentId: string,
   question: string,
   history: any,
-): Promise<{ answer: string }> {
-  const response = await axios.post(`${AI_SERVICE_URL}/query`, {
-    document_id: documentId,
-    question,
-    history,
-  });
+): Promise<Readable> {
+  const response = await axios.post(
+    `${AI_SERVICE_URL}/query`,
+    {
+      document_id: documentId,
+      question,
+      history,
+    },
+    { responseType: "stream" },
+  ); // Set responseType to 'stream' for streaming responses
 
   return response.data;
 }
