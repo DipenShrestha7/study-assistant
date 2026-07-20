@@ -111,3 +111,17 @@ export async function fetchMessagesForDocument(
   const response = await axios.get(`${API_BASE_URL}/messages/${docId}`);
   return response.data;
 }
+
+export async function renameStudyDocument(
+  docId: number,
+  filename: string,
+): Promise<StudyDocument> {
+  const response = await axios.patch(`${API_BASE_URL}/documents/${docId}/rename`, {
+    filename,
+  });
+  return response.data;
+}
+
+export async function deleteStudyDocument(docId: number): Promise<void> {
+  await axios.delete(`${API_BASE_URL}/documents/${docId}`);
+}

@@ -144,3 +144,47 @@ export async function getMessagesForDocument(
   });
   return reply.send(messages);
 }
+export async function renameStudyDocument(
+  request: FastifyRequest<{ Params: { docId: string }; Body: { filename: string } }>,
+  reply: FastifyReply,
+) {
+  const docId = Number(request.params.docId);
+  const { filename } = request.body;
+
+  if (!Number.isInteger(docId) || docId <= 0) {
+    return reply.status(400).send({ error: "Invalid document id" });
+  }
+
+  if (!filename?.trim()) {
+    return reply.status(400).send({ error: "Filename is required" });
+  }
+
+  const doc = await documentModel.findByPk(docId);
+  if (!doc) {
+    return reply.status(404).send({ error: "Document not found" });
+  }
+
+  await doc.update({ filename: filename.trim() });
+  return reply.send(doc);
+}
+
+export async function deleteStudyDocument(
+  request: FastifyRequest<{ Params: { docId: string } }>,
+  reply: FastifyReply,
+) {
+  const docId = Number(request.params.docId);
+
+  if (!Number.isInteger(docId) || docId <= 0) {
+    return reply.status(400).send({ error: "Invalid document id" });
+  }
+
+  const doc = await documentModel.findByPk(docId);
+  if (!doc) {
+    return reply.status(404).send({ error: "Document not found" });
+  }
+
+  await messageModel.destroy({ where: { document_id: String(docId) } });
+  await doc.destroy();
+
+  return reply.status(200).send({ success: true });
+}

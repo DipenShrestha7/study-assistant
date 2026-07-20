@@ -4,6 +4,8 @@ import {
   queryStudyMaterial,
   getAllDocuments,
   getMessagesForDocument,
+  renameStudyDocument,
+  deleteStudyDocument,
 } from "../controllers/studyController.js";
 
 /**
@@ -17,4 +19,8 @@ export async function studyRoutes(fastify: FastifyInstance) {
   fastify.get("/documents", getAllDocuments);
 
   fastify.get("/messages/:docId", getMessagesForDocument);
+
+  fastify.patch("/documents/:docId/rename", renameStudyDocument);
+
+  fastify.delete("/documents/:docId", deleteStudyDocument);
 }

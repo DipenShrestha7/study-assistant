@@ -4,9 +4,20 @@ import {
   uploadStudyDocument,
   queryDocumentContext,
   fetchMessagesForDocument,
+  renameStudyDocument,
+  deleteStudyDocument,
   type StudyDocument,
 } from "./api/client";
-import { Upload, MessageSquare, FileText, Send, Loader2 } from "lucide-react";
+import {
+  Upload,
+  MessageSquare,
+  FileText,
+  Send,
+  Loader2,
+  EllipsisVertical,
+  Pencil,
+  Trash2,
+} from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -15,7 +26,11 @@ interface ChatMessage {
   text: string;
 }
 
-export default function App() {
+interface FileActionMenuProps {
+  onClose?: () => void;
+}
+
+export default function App({ onClose = () => {} }: FileActionMenuProps) {
   // State elements mapped directly to our procedural data flows
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [documents, setDocuments] = useState<StudyDocument[]>([]);
@@ -24,6 +39,27 @@ export default function App() {
   const [question, setQuestion] = useState("");
   const [uploading, setUploading] = useState(false);
   const [loadingAnswer, setLoadingAnswer] = useState(false);
+  const [isMenuOpen, setIsMenuOpen] = useState<number | null>(null);
+  const [activeModal, setActiveModal] = useState<{
+    type: "rename" | "delete";
+    doc: StudyDocument;
+  } | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [actionLoading, setActionLoading] = useState(false);
+  const activeMenuButtonRef = useRef<HTMLButtonElement | null>(null);
+  const activeMenuContentRef = useRef<HTMLDivElement | null>(null);
+
+  const handleToggleMenu = (fileId: number) => {
+    setIsMenuOpen((currentMenuId) =>
+      currentMenuId === fileId ? null : fileId,
+    );
+  };
+
+  const closeMenu = () => {
+    setIsMenuOpen(null);
+    onClose();
+  };
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -32,6 +68,25 @@ export default function App() {
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      const target = event.target as Node;
+      const clickedInsideActiveMenu =
+        activeMenuButtonRef.current?.contains(target) ||
+        activeMenuContentRef.current?.contains(target);
+
+      if (isMenuOpen !== null && !clickedInsideActiveMenu) {
+        closeMenu();
+      }
+    }
+
+    document.addEventListener("mousedown", handleClickOutside);
+
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [isMenuOpen, onClose]);
 
   // Synchronize component mounting with active database records
   useEffect(() => {
@@ -68,6 +123,82 @@ export default function App() {
       console.error("Upload failed:", err);
     } finally {
       setUploading(false);
+    }
+  };
+
+  const closeActionModal = () => {
+    setActiveModal(null);
+    setRenameDraft("");
+    setActionError(null);
+    setActionLoading(false);
+  };
+
+  const openRenameModal = (doc: StudyDocument) => {
+    setActiveModal({ type: "rename", doc });
+    setRenameDraft(doc.filename);
+    setActionError(null);
+    setActionLoading(false);
+    closeMenu();
+  };
+
+  const openDeleteModal = (doc: StudyDocument) => {
+    setActiveModal({ type: "delete", doc });
+    setActionError(null);
+    setActionLoading(false);
+    closeMenu();
+  };
+
+  const handleRenameDocument = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!activeModal?.doc || activeModal.type !== "rename") return;
+
+    const nextName = renameDraft.trim();
+    if (!nextName) {
+      setActionError("Please enter a filename.");
+      return;
+    }
+
+    setActionLoading(true);
+    setActionError(null);
+
+    try {
+      const updatedDoc = await renameStudyDocument(
+        activeModal.doc.id,
+        nextName,
+      );
+      setDocuments((prev) =>
+        prev.map((item) => (item.id === updatedDoc.id ? updatedDoc : item)),
+      );
+      closeActionModal();
+    } catch (err) {
+      console.error("Rename failed:", err);
+      setActionError("Unable to rename this document right now.");
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleDeleteDocument = async () => {
+    if (!activeModal?.doc || activeModal.type !== "delete") return;
+
+    setActionLoading(true);
+    setActionError(null);
+
+    try {
+      await deleteStudyDocument(activeModal.doc.id);
+      setDocuments((prev) =>
+        prev.filter((item) => item.id !== activeModal.doc.id),
+      );
+      if (selectedDocId === activeModal.doc.id) {
+        setSelectedDocId(null);
+        setMessages([]);
+      }
+      closeActionModal();
+    } catch (err) {
+      console.error("Delete failed:", err);
+      setActionError("Unable to delete this document right now.");
+    } finally {
+      setActionLoading(false);
     }
   };
 
@@ -165,7 +296,7 @@ export default function App() {
             Uploaded Guides
           </h3>
           {documents.map((doc) => (
-            <button
+            <div
               key={doc.id}
               onClick={() => {
                 setSelectedDocId(doc.id);
@@ -181,7 +312,55 @@ export default function App() {
                 className={`h-4 w-4 shrink-0 ${selectedDocId === doc.id ? "text-indigo-400" : "text-slate-500 group-hover:text-slate-400"}`}
               />
               <span className="truncate">{doc.filename}</span>
-            </button>
+              <div className="relative ml-auto">
+                <button
+                  ref={isMenuOpen === doc.id ? activeMenuButtonRef : null}
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleToggleMenu(doc.id);
+                  }}
+                  className="p-1 text-slate-400 hover:text-white rounded"
+                >
+                  <EllipsisVertical className="w-4 h-4" />
+                </button>
+                {isMenuOpen === doc.id && (
+                  <div
+                    ref={isMenuOpen === doc.id ? activeMenuContentRef : null}
+                    onClick={(e) => e.stopPropagation()}
+                    className="absolute right-0 mt-2 w-44 origin-top-right rounded-xl bg-[#11131e] border border-slate-800 p-1.5 shadow-2xl z-50"
+                  >
+                    <div className="flex flex-col gap-0.5">
+                      {/* Rename Button */}
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openRenameModal(doc);
+                        }}
+                        className="flex w-full items-center gap-3 px-3 py-2 text-sm text-slate-300 hover:bg-[#1b1f32] hover:text-white rounded-lg transition-colors text-left group"
+                      >
+                        <Pencil className="w-4 h-4 text-slate-400 group-hover:text-slate-200 transition-colors" />
+                        <span>Rename</span>
+                      </button>
+
+                      {/* Delete Button */}
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openDeleteModal(doc);
+                        }}
+                        className="flex w-full items-center gap-3 px-3 py-2 text-sm text-rose-400 hover:bg-rose-950/30 hover:text-rose-300 rounded-lg transition-colors text-left group"
+                      >
+                        <Trash2 className="w-4 h-4 text-rose-400/80 group-hover:text-rose-400 transition-colors" />
+                        <span>Delete</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
           ))}
         </div>
       </aside>
@@ -274,6 +453,110 @@ export default function App() {
           </div>
         )}
       </main>
+
+      {activeModal && (
+        <div
+          className="fixed inset-0 z-100 flex items-center justify-center bg-slate-950/80 backdrop-blur-sm px-4"
+          onClick={closeActionModal}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-md rounded-2xl border border-slate-800 bg-[#11131e] shadow-2xl"
+          >
+            <div className="border-b border-slate-800 px-5 py-4">
+              <div className="flex items-center gap-3">
+                {activeModal.type === "rename" ? (
+                  <div className="rounded-lg bg-indigo-600/10 p-2 text-indigo-400">
+                    <Pencil className="h-4 w-4" />
+                  </div>
+                ) : (
+                  <div className="rounded-lg bg-rose-500/10 p-2 text-rose-400">
+                    <Trash2 className="h-4 w-4" />
+                  </div>
+                )}
+                <div>
+                  <h3 className="text-sm font-semibold text-white">
+                    {activeModal.type === "rename"
+                      ? "Rename document"
+                      : "Delete document"}
+                  </h3>
+                  <p className="text-xs text-slate-400">
+                    {activeModal.type === "rename"
+                      ? "Update the document title shown in your library."
+                      : "This action will remove the guide and its chat history."}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="px-5 py-4">
+              {activeModal.type === "rename" ? (
+                <form onSubmit={handleRenameDocument} className="space-y-4">
+                  <label className="block text-sm text-slate-300">
+                    <span className="mb-2 block">New name</span>
+                    <input
+                      type="text"
+                      value={renameDraft}
+                      onChange={(e) => setRenameDraft(e.target.value)}
+                      className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                      autoFocus
+                    />
+                  </label>
+                  {actionError && (
+                    <p className="text-sm text-rose-400">{actionError}</p>
+                  )}
+                  <div className="flex justify-end gap-2 pt-2">
+                    <button
+                      type="button"
+                      onClick={closeActionModal}
+                      className="rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-300 transition hover:bg-slate-800"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={actionLoading}
+                      className="rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium text-white transition hover:bg-indigo-700 disabled:opacity-60"
+                    >
+                      {actionLoading ? "Saving..." : "Save"}
+                    </button>
+                  </div>
+                </form>
+              ) : (
+                <div className="space-y-4">
+                  <p className="text-sm text-slate-300">
+                    Delete{" "}
+                    <span className="font-medium text-white">
+                      {activeModal.doc.filename}
+                    </span>
+                    ?
+                  </p>
+                  {actionError && (
+                    <p className="text-sm text-rose-400">{actionError}</p>
+                  )}
+                  <div className="flex justify-end gap-2 pt-2">
+                    <button
+                      type="button"
+                      onClick={closeActionModal}
+                      className="rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-300 transition hover:bg-slate-800"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleDeleteDocument}
+                      disabled={actionLoading}
+                      className="rounded-lg bg-rose-600 px-3 py-2 text-sm font-medium text-white transition hover:bg-rose-700 disabled:opacity-60"
+                    >
+                      {actionLoading ? "Deleting..." : "Delete"}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
