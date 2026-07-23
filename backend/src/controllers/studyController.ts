@@ -1,4 +1,5 @@
 import type { FastifyRequest, FastifyReply } from "fastify";
+import { PassThrough } from "stream";
 import {
   uploadFileToAIService,
   queryDocumentFromAIService,
@@ -82,13 +83,21 @@ export async function queryStudyMaterial(
       "Content-Type, Authorization",
     );
 
-    let fullAssistantResponse = "";
+    const lineCollector: string[] = [];
+    const stripLogLines = (text: string) =>
+      text
+        .replace(/^__LOG__:.*$/gm, "")
+        .replace(/^LOG:.*$/gm, "")
+        .replace(/Context verified successfully/g, "")
+        .trim();
 
+    const passthrough = new PassThrough();
     aiResponseStream.on("data", (chunk: Buffer) => {
-      fullAssistantResponse += chunk.toString();
+      lineCollector.push(chunk.toString());
     });
 
     aiResponseStream.on("end", async () => {
+      const assistantContent = stripLogLines(lineCollector.join(""));
       try {
         await messageModel.create({
           document_id: docId,
@@ -99,15 +108,16 @@ export async function queryStudyMaterial(
         await messageModel.create({
           document_id: docId,
           role: "assistant",
-          content: fullAssistantResponse.trim(),
+          content: assistantContent,
         });
       } catch (dbError) {
         request.log.error({ err: dbError }, "Failed to save response:");
       }
     });
 
-    // Pipe the stream out to the frontend
-    aiResponseStream.pipe(reply.raw);
+    // Pipe the stream through a PassThrough to avoid consuming the original stream twice.
+    aiResponseStream.pipe(passthrough);
+    passthrough.pipe(reply.raw);
     await reply;
   } catch (error) {
     request.log.error({ err: error }, "Streaming transaction failure:", {});
@@ -131,6 +141,14 @@ export async function getAllDocuments(
   return reply.send(docs);
 }
 
+const stripSavedLogLines = (text: string) =>
+  text
+    .replace(/^\s*__LOG__:\s*.*$/gim, "")
+    .replace(/^\s*LOG:\s*.*$/gim, "")
+    .replace(/Context verified successfully/gim, "")
+    .replace(/\n{2,}/g, "\n")
+    .trim();
+
 /**
  * Fetches all the chats for a specific document
  */
@@ -142,10 +160,20 @@ export async function getMessagesForDocument(
     where: { document_id: request.params.docId },
     order: [["createdAt", "ASC"]],
   });
-  return reply.send(messages);
+
+  const sanitizedMessages = messages.map((msg: any) => ({
+    ...msg.toJSON(),
+    content:
+      msg.role === "assistant" ? stripSavedLogLines(msg.content) : msg.content,
+  }));
+
+  return reply.send(sanitizedMessages);
 }
 export async function renameStudyDocument(
-  request: FastifyRequest<{ Params: { docId: string }; Body: { filename: string } }>,
+  request: FastifyRequest<{
+    Params: { docId: string };
+    Body: { filename: string };
+  }>,
   reply: FastifyReply,
 ) {
   const docId = Number(request.params.docId);

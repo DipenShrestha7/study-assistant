@@ -20,6 +20,8 @@ import {
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import rehypeRaw from "rehype-raw";
+import rehypeSanitize from "rehype-sanitize";
 
 interface ChatMessage {
   role: "user" | "ai";
@@ -46,10 +48,18 @@ export default function App({ onClose = () => {} }: FileActionMenuProps) {
   } | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
   const [actionError, setActionError] = useState<string | null>(null);
+  const [currentDocument, setCurrentDocument] = useState<number | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
   const activeMenuButtonRef = useRef<HTMLButtonElement | null>(null);
   const activeMenuContentRef = useRef<HTMLDivElement | null>(null);
-
+  const parsedId: number | null = (() => {
+    const pathMatch = window.location.pathname.match(/\/documents\/(\d+)/);
+    if (pathMatch && pathMatch[1]) {
+      const id = parseInt(pathMatch[1], 10);
+      return isNaN(id) ? null : id;
+    }
+    return null;
+  })();
   const handleToggleMenu = (fileId: number) => {
     setIsMenuOpen((currentMenuId) =>
       currentMenuId === fileId ? null : fileId,
@@ -93,6 +103,7 @@ export default function App({ onClose = () => {} }: FileActionMenuProps) {
     fetchAllDocuments()
       .then(setDocuments)
       .catch((err) => console.error("Failed to load documents:", err));
+    setSelectedDocId(parsedId);
   }, []);
 
   useEffect(() => {
@@ -103,7 +114,20 @@ export default function App({ onClose = () => {} }: FileActionMenuProps) {
             role: msg.role === "user" ? "user" : "ai",
             text: msg.content,
           }));
-          setMessages(formattedMsgs);
+          const visibleMessages = formattedMsgs.filter((msg) => {
+            // Hide tool/log messages entirely when loading saved chat history.
+            if (typeof msg.text !== "string") return true;
+            const trimmedText = msg.text.trim();
+            if (
+              trimmedText.startsWith("LOG:") ||
+              trimmedText.startsWith("__LOG__:") ||
+              trimmedText.includes("Context verified successfully")
+            ) {
+              return false;
+            }
+            return true;
+          });
+          setMessages(visibleMessages);
         })
         .catch((err) => console.error("Failed to load messages:", err));
     }
@@ -271,6 +295,37 @@ export default function App({ onClose = () => {} }: FileActionMenuProps) {
     }
   };
 
+  function formatSavedMessage(content: string) {
+    let formatted = content
+      // Strip lines starting with LOG markers or tool indicators
+      .replace(/^LOG:.*$/gm, "")
+      .replace(/^__LOG__:\s*.*$/gm, "")
+      .replace(/Context verified successfully/g, "")
+      .replace(/<br\s*\/?/gi, "\n")
+      .trim();
+
+    const conclusionLines: string[] = [];
+    formatted = formatted
+      .split("\n")
+      .filter((line) => {
+        const match = line.match(/^\|\s*Conclusion\s*\|\s*(.*)$/i);
+        if (match) {
+          conclusionLines.push(match[1].trim().split("|")[0].trim());
+          return false;
+        }
+        return true;
+      })
+      .join("\n")
+      .trim();
+
+    if (conclusionLines.length > 0) {
+      formatted =
+        `${formatted}\n\n**Conclusion:** ${conclusionLines.join(" ")}`.trim();
+    }
+
+    return formatted;
+  }
+
   return (
     <div className="flex h-screen bg-slate-900 text-slate-100 font-sans antialiased">
       {/* Sidebar: Document Management Panels */}
@@ -301,6 +356,8 @@ export default function App({ onClose = () => {} }: FileActionMenuProps) {
               onClick={() => {
                 setSelectedDocId(doc.id);
                 setMessages([]);
+                window.history.replaceState({}, "", `/documents/${doc.id}`);
+                setCurrentDocument(doc.id);
               }}
               className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left text-sm transition group border ${
                 selectedDocId === doc.id
@@ -374,7 +431,7 @@ export default function App({ onClose = () => {} }: FileActionMenuProps) {
               {messages.map((msg, idx) => (
                 <div
                   key={idx}
-                  className={`flex gap-3 max-w-3xl ${msg.role === "user" ? "ml-auto flex-row-reverse" : ""}`}
+                  className={`flex gap-3 w-full ${msg.role === "user" ? "max-w-3xl ml-auto flex-row-reverse" : "max-w-full"}`}
                 >
                   <div
                     className={`h-8 w-8 rounded-full flex items-center justify-center shrink-0 shadow-sm ${msg.role === "user" ? "bg-indigo-600 text-white" : "bg-emerald-600 text-white"}`}
@@ -386,14 +443,77 @@ export default function App({ onClose = () => {} }: FileActionMenuProps) {
                     )}
                   </div>
                   <div
-                    className={`p-4 rounded-xl text-sm leading-relaxed shadow-sm border ${
+                    className={`w-full p-4 rounded-xl text-sm leading-relaxed shadow-sm border ${
                       msg.role === "user"
                         ? "bg-indigo-600/10 border-indigo-500/20 text-indigo-100"
                         : "bg-slate-800/80 border-slate-700/60 text-slate-200"
                     }`}
                   >
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                      {msg.text}
+                    <ReactMarkdown
+                      remarkPlugins={[remarkGfm]}
+                      rehypePlugins={[rehypeRaw, rehypeSanitize]}
+                      components={{
+                        // 1. Heading Styles
+                        h1: ({ node, ...props }) => (
+                          <h1
+                            className="text-2xl font-bold text-slate-100 my-4 border-b border-slate-700 pb-2"
+                            {...props}
+                          />
+                        ),
+                        h2: ({ node, ...props }) => (
+                          <h2
+                            className="text-xl font-semibold text-slate-100 mt-6 mb-3"
+                            {...props}
+                          />
+                        ),
+                        h3: ({ node, ...props }) => (
+                          <h3
+                            className="text-lg font-medium text-slate-200 mt-4 mb-2"
+                            {...props}
+                          />
+                        ),
+                        // 1. Table Outer Border
+                        table: ({ node, ...props }) => (
+                          <div className="overflow-x-auto my-4 rounded-lg border border-slate-700/60 shadow-sm">
+                            <table
+                              className="table-auto w-full divide-y divide-slate-700/60 text-sm text-left border-collapse"
+                              {...props}
+                            />
+                          </div>
+                        ),
+
+                        // 2. Table Headers with right border
+                        th: ({ node, ...props }) => (
+                          <th
+                            className="first:w-36 px-4 py-3 font-semibold bg-slate-800/80 text-slate-100 border-r border-slate-700/60 last:border-r-0"
+                            {...props}
+                          />
+                        ),
+                        tbody: ({ node, ...props }) => (
+                          <tbody
+                            className="divide-y divide-slate-800 bg-slate-900 text-slate-300"
+                            {...props}
+                          />
+                        ),
+
+                        // 3. Table Rows with horizontal division
+                        tr: ({ node, ...props }) => (
+                          <tr
+                            className="border-b border-slate-800/80 last:border-b-0 hover:bg-slate-800/30 transition-colors"
+                            {...props}
+                          />
+                        ),
+
+                        // 4. Table Cells with right border
+                        td: ({ node, ...props }) => (
+                          <td
+                            className="first:w-36 px-4 py-3 align-top text-slate-300 border-r border-slate-700/60 last:border-r-0"
+                            {...props}
+                          />
+                        ),
+                      }}
+                    >
+                      {formatSavedMessage(msg.text)}
                     </ReactMarkdown>
                   </div>
                   <div ref={messagesEndRef} />

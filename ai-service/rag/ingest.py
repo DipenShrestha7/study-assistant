@@ -1,37 +1,35 @@
-import os
-from langchain_community.vectorstores import Chroma
-from langchain_classic.chains import create_retrieval_chain
-from langchain_classic.chains.combine_documents import create_stuff_documents_chain
-from langchain_core.prompts import ChatPromptTemplate
-from config import embeddings, llm
+﻿import os
+import uuid
+from langchain_community.document_loaders import PyPDFLoader
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_chroma import Chroma
+from rag.config import embeddings
 
 CHROMA_DIR = os.path.join(os.path.dirname(__file__), "../chroma_db")
 
-def query_vector_db_context(document_id: str, question: str) -> str:
+
+def ingest_pdf(file_path: str) -> str:
     """
-    Retrieves matching document chunks from Chroma based on structural metadata 
-    filtering and uses them as an anchor context to answer the user's prompt.
+    Ingests a PDF into the local Chroma vector store and returns the document ID.
     """
-    
-    db = Chroma(persist_directory=CHROMA_DIR, embedding_function=embeddings)
-    
-    retriever = db.as_retriever(
-        search_kwargs={"filter": {"document_id": document_id}, "k": 4}
+    document_id = str(uuid.uuid4())
+
+    loader = PyPDFLoader(file_path)
+    pages = loader.load()
+
+    text_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=1000,
+        chunk_overlap=200,
     )
-    
-    system_prompt = (
-        "You are an expert study assistant. Use the following pieces of retrieved context "
-        "to answer the question. If you don't know the answer, say that you don't know.\n\n"
-        "{context}"
+    chunks = text_splitter.split_documents(pages)
+
+    for chunk in chunks:
+        chunk.metadata["document_id"] = document_id
+
+    Chroma.from_documents(
+        documents=chunks,
+        embedding=embeddings,
+        persist_directory=CHROMA_DIR,
     )
-    
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", system_prompt),
-        ("human", "{input}"),
-    ])
-    
-    question_answer_chain = create_stuff_documents_chain(llm, prompt)
-    rag_chain = create_retrieval_chain(retriever, question_answer_chain)
-    
-    response = rag_chain.invoke({"input": question})
-    return response["answer"]
+
+    return document_id

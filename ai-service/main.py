@@ -1,6 +1,5 @@
 import os
 import shutil
-import uuid
 from fastapi import FastAPI, UploadFile, File
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, AliasChoices
@@ -9,25 +8,10 @@ from typing import List, Dict, Optional
 
 load_dotenv()
 
-from langchain_community.document_loaders import PyPDFLoader
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_openai import OpenAIEmbeddings, ChatOpenAI
-from langchain_chroma import Chroma
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_core.messages import HumanMessage, AIMessage
-from langchain_tavily import TavilySearch
-from langchain_core.tools import Tool
-
-from langchain_classic.agents import AgentExecutor, create_tool_calling_agent
+from rag.ingest import ingest_pdf
+from rag.query import create_query_response_generator
 
 app = FastAPI(title="AI Study Assistant Vector Service")
-CHROMA_DIR = os.path.join(os.path.dirname(__file__), "chroma_db")
-
-embeddings = OpenAIEmbeddings(
-    openai_api_base="https://openrouter.ai/api/v1",
-    model="openai/text-embedding-3-small",
-    openai_api_key=os.getenv("OPENROUTER_API_KEY"),
-)
 
 
 class QueryRequest(BaseModel):
@@ -53,23 +37,7 @@ async def handle_file_ingestion(file: UploadFile = File(...)):
         shutil.copyfileobj(file.file, buffer)
 
     try:
-        document_id = str(uuid.uuid4())
-
-        loader = PyPDFLoader(file_path)
-        pages = loader.load()
-
-        text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1000, chunk_overlap=200
-        )
-        chunks = text_splitter.split_documents(pages)
-
-        for chunk in chunks:
-            chunk.metadata["document_id"] = document_id
-
-        # Uses the globally fixed OpenRouter configuration
-        Chroma.from_documents(
-            documents=chunks, embedding=embeddings, persist_directory=CHROMA_DIR
-        )
+        document_id = ingest_pdf(file_path)
         return {"document_id": document_id}
 
     finally:
@@ -82,94 +50,12 @@ async def handle_document_query(payload: QueryRequest):
     """
     Procedural endpoint executing context retrieval and LLM completion pipelines.
     """
-    llm = ChatOpenAI(
-        openai_api_base="https://openrouter.ai/api/v1",
-        model="openai/gpt-4o-mini",  # Note: ensure your model explicitly supports OpenAI Tool Calling
-        openai_api_key=os.getenv("OPENROUTER_API_KEY"),
-        temperature=0.7,
-        streaming=True,  # Enable streaming for immediate token delivery
-    )
-
-    db = Chroma(persist_directory=CHROMA_DIR, embedding_function=embeddings)
-    retriever = db.as_retriever(
-        search_kwargs={"filter": {"document_id": payload.document_id}, "k": 3}
-    )
-
-    def search_local_pdf(query: str) -> str:
-        docs = retriever.invoke(query)
-        return "\n\n".join([doc.page_content for doc in docs])
-
-    pdf_tool = Tool(
-        name="Document_Search",
-        func=search_local_pdf,
-        description="CRITICAL: Use this tool first for any academic questions regarding the specific uploaded course syllabus, document, textbook, or file material.",
-    )
-
-    web_tool = TavilySearch(
-        max_results=1,  # Only grab the #1 definitive web result to save token processing
-        include_raw_content=False,  # Strip heavy raw HTML text entirely
-        search_depth="advanced",  # Keeps content highly relevant/accurate
-        description=(
-            "STRICT CONDITION: Use this tool ONLY IF the user explicitly asks you to search the web, "
-            "or look up live data outside their PDF. Otherwise, stick to Document_Search."
+    return StreamingResponse(
+        create_query_response_generator(
+            payload.document_id, payload.question, payload.history
         ),
+        media_type="text/plain",
     )
-    tools = [pdf_tool, web_tool]
-
-    system_prompt = (
-        "You are an expert, proactive study assistant. A study guide/PDF is ALREADY uploaded "
-        "and active in the current session. Whenever the user says 'this file', 'the document', "
-        "or asks you to explain the material, you MUST immediately invoke the 'Document_Search' tool "
-        "using relevant keywords from their query to see what content is inside.\n\n"
-        "CRITICAL ROUTING INSTRUCTIONS:\n"
-        "1. Do not ask the user to upload a file—one is already available via the 'Document_Search' tool.\n"
-        "2. If 'Document_Search' returns empty or insufficient context, immediately invoke 'TavilySearch' "
-        "   to look up web explanations for the topic so you never leave the student empty-handed."
-    )
-
-    agent_prompt = ChatPromptTemplate.from_messages(
-        [
-            ("system", system_prompt),
-            MessagesPlaceholder("chat_history"),
-            ("human", "{input}"),
-            MessagesPlaceholder("agent_scratchpad"),
-        ]
-    )
-
-    agent = create_tool_calling_agent(llm, tools, agent_prompt)
-    agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True)
-
-    chat_history = []
-    for turn in payload.history:
-        if turn["role"] == "user":
-            chat_history.append(HumanMessage(content=turn["content"]))
-        else:
-            chat_history.append(AIMessage(content=turn["content"]))
-
-    # Asynchronous generator function for immediate UI chunk delivery
-    async def response_generator():
-        # Using .stream() lets us watch the agent's internal lifecycle stages
-        async for event in agent_executor.astream_events(
-            {"input": payload.question, "chat_history": chat_history}, version="v2"
-        ):
-            kind = event["event"]
-
-            # Scenario A: The Agent is executing a tool call (Show progress)
-            if kind == "on_tool_start":
-                yield f"__LOG__: Using {event['name']} to find facts...\n"
-
-            # Scenario B: The tool finished execution
-            elif kind == "on_tool_end":
-                yield f"__LOG__: Context verified successfully.\n"
-
-            # Scenario C: The LLM is generating final answer tokens (Stream them immediately)
-            elif kind == "on_chat_model_stream":
-                content = event["data"]["chunk"].content
-                if content:
-                    yield content  # Yield tokens to client the millisecond they appear
-
-    # 5. Return a streaming text connection back to your node layers
-    return StreamingResponse(response_generator(), media_type="text/plain")
 
 
 if __name__ == "__main__":
