@@ -5,9 +5,11 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import HumanMessage, AIMessage
 from langchain_core.tools import Tool
 from langchain_openai import ChatOpenAI
-from langchain_tavily import TavilySearch
 from langchain_classic.agents import AgentExecutor, create_tool_calling_agent
 from rag.config import embeddings
+from tools.web_tool import web_tool
+from tools.pdf_tool import create_pdf_tool
+from rag.tools.image_gen import image_tool
 
 CHROMA_DIR = os.path.join(os.path.dirname(__file__), "../chroma_db")
 
@@ -51,15 +53,16 @@ async def create_query_response_generator(
 ) -> AsyncGenerator[str, None]:
     llm = ChatOpenAI(
         openai_api_base="https://openrouter.ai/api/v1",
-        model="openai/gpt-4o-mini",
+        model="nvidia/nemotron-3-ultra:free",
         openai_api_key=os.getenv("OPENROUTER_API_KEY"),
         temperature=0.7,
         streaming=True,
+        max_tokens=16384,
     )
 
     db = Chroma(persist_directory=CHROMA_DIR, embedding_function=embeddings)
     retriever = db.as_retriever(
-        search_kwargs={"filter": {"document_id": document_id}, "k": 3}
+        search_kwargs={"filter": {"document_id": document_id}, "k": 8}
     )
 
     chat_history = []
@@ -71,38 +74,23 @@ async def create_query_response_generator(
 
     raw_history = _build_chat_history(history)
 
-    def search_local_pdf(query: str) -> str:
-        new_query = rewrite_query(query, raw_history, llm)
-        print("Original Query:", query)
-        print("Rewritten Query:", new_query)
-        docs = retriever.invoke(new_query)
-        return "\n\n".join([doc.page_content for doc in docs])
-
-    pdf_tool = Tool(
-        name="Document_Search",
-        func=search_local_pdf,
-        description=(
-            "CRITICAL: Use this tool first for any academic questions regarding the specific uploaded course syllabus, "
-            "document, textbook, or file material."
-        ),
+    pdf_tool = create_pdf_tool(
+        rewrite_query=rewrite_query,
+        raw_history=raw_history,
+        llm=llm,
+        retriever=retriever,
     )
-
-    web_tool = TavilySearch(
-        max_results=1,
-        include_raw_content=False,
-        search_depth="advanced",
-        description=(
-            "STRICT CONDITION: Use this tool ONLY IF the user explicitly asks you to search the web, "
-            "or look up live data outside their PDF. Otherwise, stick to Document_Search."
-        ),
-    )
-    tools = [pdf_tool, web_tool]
+    tools = [pdf_tool, web_tool, image_tool]
 
     system_prompt = """
         You are an expert, proactive study assistant. A study guide/PDF is ALREADY uploaded 
         and active in the current session. Whenever the user says 'this file', 'the document', 
         or asks you to explain the material, you MUST immediately invoke the 'Document_Search' tool 
         using relevant keywords from their query to see what content is inside.\n\n
+        RESPONSE LENGTH & DEPTH INSTRUCTIONS:
+            1. ADAPTIVE LENGTH: Match the scope and depth requested by the user.
+            2. CONCISE BY DEFAULT: For general questions (e.g., "What is X?"), provide a clean, direct, standard-length explanation. Do not overwhelm the user with unnecessary details.
+            3. DETAILED ON DEMAND: ONLY generate long, exhaustive, step-by-step explanations if the user explicitly asks for depth (e.g., using keywords like "explain in detail", "step-by-step", "elaborate", "comprehensive", "deep dive", or "explain everything").
         CRITICAL ROUTING INSTRUCTIONS:\n
             1. Do not ask the user to upload a file—one is already available via the 'Document_Search' tool.\n
             2. If 'Document_Search' returns empty or insufficient context, immediately invoke 'TavilySearch' 

@@ -472,6 +472,14 @@ export default function App({ onClose = () => {} }: FileActionMenuProps) {
                             {...props}
                           />
                         ),
+                        img: ({ node, ...props }) => (
+                          <img
+                            {...props}
+                            className="rounded-lg max-w-full h-auto my-4 shadow-md border"
+                            alt={props.alt || "Generated visual"}
+                            loading="lazy"
+                          />
+                        ),
                         // 1. Table Outer Border
                         table: ({ node, ...props }) => (
                           <div className="overflow-x-auto my-4 rounded-lg border border-slate-700/60 shadow-sm">
