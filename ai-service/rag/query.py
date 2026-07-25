@@ -1,6 +1,5 @@
 ﻿import os
 from typing import AsyncGenerator, Dict, List, Optional
-
 from langchain_community.vectorstores import Chroma
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import HumanMessage, AIMessage
@@ -8,10 +7,8 @@ from langchain_core.tools import Tool
 from langchain_openai import ChatOpenAI
 from langchain_tavily import TavilySearch
 from langchain_classic.agents import AgentExecutor, create_tool_calling_agent
-
 from rag.config import embeddings
 
-# Map to the same Chroma database storage path
 CHROMA_DIR = os.path.join(os.path.dirname(__file__), "../chroma_db")
 
 
@@ -19,6 +16,32 @@ def _build_chat_history(
     history: Optional[List[Dict[str, str]]],
 ) -> List[Dict[str, str]]:
     return history or []
+
+
+def rewrite_query(question: str, chat_history: list, llm) -> str:
+    """
+    Converts a follow-up question into a standalone query using chat history.
+    """
+
+    if not chat_history:
+        return question  # no history → nothing to fix
+
+    # Keep it short to save tokens (you already limit to 4 messages 👍)
+    history_text = "\n".join(
+        [f"{msg['role']}: {msg['content']}" for msg in chat_history]
+    )
+
+    prompt = f"""
+    Given the conversation below, rewrite the user's question into a clear standalone question.
+    Conversation:
+    {history_text}
+    Question:
+    {question}
+    Standalone question:
+    """
+
+    response = llm.invoke(prompt)
+    return response.content.strip()
 
 
 async def create_query_response_generator(
@@ -39,8 +62,20 @@ async def create_query_response_generator(
         search_kwargs={"filter": {"document_id": document_id}, "k": 3}
     )
 
+    chat_history = []
+    for turn in _build_chat_history(history):
+        if turn["role"] == "user":
+            chat_history.append(HumanMessage(content=turn["content"]))
+        else:
+            chat_history.append(AIMessage(content=turn["content"]))
+
+    raw_history = _build_chat_history(history)
+
     def search_local_pdf(query: str) -> str:
-        docs = retriever.invoke(query)
+        new_query = rewrite_query(query, raw_history, llm)
+        print("Original Query:", query)
+        print("Rewritten Query:", new_query)
+        docs = retriever.invoke(new_query)
         return "\n\n".join([doc.page_content for doc in docs])
 
     pdf_tool = Tool(
@@ -110,13 +145,6 @@ async def create_query_response_generator(
 
     agent = create_tool_calling_agent(llm, tools, agent_prompt)
     agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True)
-
-    chat_history = []
-    for turn in _build_chat_history(history):
-        if turn["role"] == "user":
-            chat_history.append(HumanMessage(content=turn["content"]))
-        else:
-            chat_history.append(AIMessage(content=turn["content"]))
 
     async for event in agent_executor.astream_events(
         {"input": question, "chat_history": chat_history}, version="v2"

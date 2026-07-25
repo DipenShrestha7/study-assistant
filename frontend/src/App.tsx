@@ -48,7 +48,7 @@ export default function App({ onClose = () => {} }: FileActionMenuProps) {
   } | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
   const [actionError, setActionError] = useState<string | null>(null);
-  const [currentDocument, setCurrentDocument] = useState<number | null>(null);
+  const [_, setCurrentDocument] = useState<number | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
   const activeMenuButtonRef = useRef<HTMLButtonElement | null>(null);
   const activeMenuContentRef = useRef<HTMLDivElement | null>(null);
