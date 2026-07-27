@@ -3,12 +3,11 @@ from typing import AsyncGenerator, Dict, List, Optional
 from langchain_community.vectorstores import Chroma
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import HumanMessage, AIMessage
-from langchain_core.tools import Tool
 from langchain_openai import ChatOpenAI
 from langchain_classic.agents import AgentExecutor, create_tool_calling_agent
 from rag.config import embeddings
-from tools.web_tool import web_tool
-from tools.pdf_tool import create_pdf_tool
+from rag.tools.web_tool import web_tool
+from rag.tools.pdf_tool import create_pdf_tool
 from rag.tools.image_gen import image_tool
 
 CHROMA_DIR = os.path.join(os.path.dirname(__file__), "../chroma_db")
@@ -53,11 +52,11 @@ async def create_query_response_generator(
 ) -> AsyncGenerator[str, None]:
     llm = ChatOpenAI(
         openai_api_base="https://openrouter.ai/api/v1",
-        model="nvidia/nemotron-3-ultra:free",
+        model="openrouter/free",
         openai_api_key=os.getenv("OPENROUTER_API_KEY"),
         temperature=0.7,
         streaming=True,
-        max_tokens=16384,
+        max_tokens=8192,
     )
 
     db = Chroma(persist_directory=CHROMA_DIR, embedding_function=embeddings)
@@ -113,13 +112,16 @@ async def create_query_response_generator(
         CRITICAL OUTPUT RULES:
             1. DO NOT include internal system status, tool logs, or phrases like "LOG:", "Using Document_Search...", or "Context verified" in your final response.
             2. Output ONLY the response meant for the user.
-
         HEADER RULES:
             1. ALWAYS format main section titles using Markdown heading syntax (`##` or `###`).
             2. NEVER output section titles or topic headings as plain bold text or unformatted sentences.
             3. Keep heading hierarchies structured:
             - Use `##` for primary topic titles or major sections (e.g., ## Overview, ## Comparison).
             - Use `###` for sub-sections or detailed breakdowns (e.g., ### Key Takeaways, ### Summary).
+        IMAGE GENERATION RULES:
+            When the user asks for a diagram or visual, you MUST use the 'image_tool'. 
+            DO NOT describe the diagram in text or lie about generating an image. You must call 'image_tool' 
+            immediately to provide the visual result.
         """
 
     agent_prompt = ChatPromptTemplate.from_messages(
@@ -132,7 +134,9 @@ async def create_query_response_generator(
     )
 
     agent = create_tool_calling_agent(llm, tools, agent_prompt)
-    agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True)
+    agent_executor = AgentExecutor(
+        agent=agent, tools=tools, verbose=True, return_intermediate_steps=False
+    )
 
     async for event in agent_executor.astream_events(
         {"input": question, "chat_history": chat_history}, version="v2"

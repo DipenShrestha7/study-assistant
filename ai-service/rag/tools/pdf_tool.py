@@ -1,4 +1,4 @@
-from langchain.agents import Tool
+from langchain_core.tools import Tool
 
 
 def create_pdf_tool(rewrite_query, raw_history, llm, retriever):
