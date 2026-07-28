@@ -3,7 +3,7 @@ import FormData from "form-data";
 import { Readable } from "stream";
 
 const AI_SERVICE_URL = process.env.AI_SERVICE_URL || "http://localhost:8000";
-
+console.log("AI URL:", AI_SERVICE_URL);
 /**
  * Sends a raw file buffer over HTTP to the Python AI service for extraction and vector storage.
  */
