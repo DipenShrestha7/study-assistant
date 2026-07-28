@@ -23,5 +23,5 @@ export const sequelize = new Sequelize(process.env.DATABASE_URL!, {
         },
       }
     : {},
-  logging: isProduction ? false : (msg) => console.log(msg), // Fixes SEQUELIZE0002 deprecation
+  logging: isProduction ? false : (msg) => console.log(msg),
 });
