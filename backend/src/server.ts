@@ -11,11 +11,19 @@ const fastify = Fastify({ logger: true, bodyLimit: 52428800 }); // 50MB limit fo
 
 // Bind necessary plugins sequentially
 await fastify.register(cors, {
-  origin: [
-    "http://localhost:5173",
-    "http://0.0.0.0:8000",
-    `${process.env.FRONTEND_URL}`,
-  ],
+  origin: (origin, cb) => {
+    const allowedOrigins = [
+      "http://localhost:5173",
+      "http://0.0.0.0:8000",
+      `${process.env.FRONTEND_URL}`,
+    ];
+    if (!origin || allowedOrigins.includes(origin)) {
+      cb(null, true);
+    } else {
+      cb(new Error("Not allowed by CORS"), false);
+    }
+  },
+
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
   allowedHeaders: ["Content-Type", "Authorization"],
   credentials: true,
