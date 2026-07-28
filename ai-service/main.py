@@ -1,4 +1,5 @@
 import os
+import uvicorn
 import shutil
 from fastapi import FastAPI, UploadFile, File
 from fastapi.responses import StreamingResponse
@@ -59,6 +60,5 @@ async def handle_document_query(payload: QueryRequest):
 
 
 if __name__ == "__main__":
-    import uvicorn
-
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run("main:app", host="0.0.0.0", port=port)
