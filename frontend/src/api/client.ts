@@ -1,7 +1,7 @@
 import axios from "axios";
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
-
+console.log("ENV URL:", import.meta.env.VITE_API_URL);
 // Explicit type layout for database metadata records
 export interface StudyDocument {
   id: number;

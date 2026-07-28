@@ -22,7 +22,6 @@ await fastify.register(cors, {
 });
 await fastify.register(multipart);
 
-// Mount your procedural endpoint routes under the "/api" prefix
 await fastify.register(studyRoutes);
 
 async function startServer() {
