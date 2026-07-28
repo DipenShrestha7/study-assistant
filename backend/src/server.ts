@@ -11,7 +11,11 @@ const fastify = Fastify({ logger: true, bodyLimit: 52428800 }); // 50MB limit fo
 
 // Bind necessary plugins sequentially
 await fastify.register(cors, {
-  origin: ["http://localhost:5173", "http://0.0.0.0:8000"],
+  origin: [
+    "http://localhost:5173",
+    "http://0.0.0.0:8000",
+    `${process.env.FRONTEND_URL}`,
+  ],
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
   allowedHeaders: ["Content-Type", "Authorization"],
   credentials: true,
@@ -34,7 +38,7 @@ async function startServer() {
     // 3. Start listening for your frontend app
     const port = Number(process.env.PORT || 5000);
     await fastify.listen({ port, host: "0.0.0.0" });
-    console.log("Backend running on http://localhost:5000");
+    console.log(`Backend server listening on http://0.0.0.0:${port}`);
   } catch (error) {
     console.error("Error starting the backend server:", error);
   }
