@@ -3,7 +3,6 @@ import FormData from "form-data";
 import { Readable } from "stream";
 
 const AI_SERVICE_URL = process.env.AI_SERVICE_URL || "http://localhost:8000";
-console.log("AI URL:", AI_SERVICE_URL);
 /**
  * Sends a raw file buffer over HTTP to the Python AI service for extraction and vector storage.
  */
@@ -12,7 +11,11 @@ export async function uploadFileToAIService(
   filename: string,
 ): Promise<{ document_id: string }> {
   const formData = new FormData();
-  formData.append("file", fileBuffer, filename);
+  const stream = Readable.from(fileBuffer);
+
+  formData.append("file", stream, {
+    filename: filename,
+  });
 
   const response = await axios.post(`${AI_SERVICE_URL}/ingest`, formData, {
     headers: formData.getHeaders(),
