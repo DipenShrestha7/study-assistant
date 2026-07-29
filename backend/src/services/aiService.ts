@@ -18,7 +18,10 @@ export async function uploadFileToAIService(
   });
 
   const response = await axios.post(`${AI_SERVICE_URL}/ingest`, formData, {
-    headers: formData.getHeaders(),
+    headers: { ...formData.getHeaders() },
+    maxContentLength: Infinity,
+    maxBodyLength: Infinity,
+    timeout: 300000, // 5 minutes
   });
 
   return response.data;

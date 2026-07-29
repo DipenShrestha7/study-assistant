@@ -1,6 +1,7 @@
 ﻿import os
 import uuid
 import re
+import gc
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_chroma import Chroma
@@ -18,21 +19,26 @@ def clean_text(text: str) -> str:
 
 
 def ingest_pdf(file_path: str) -> str:
+    vectordb = Chroma(persist_directory=CHROMA_DIR, embedding_function=embeddings)
     document_id = str(uuid.uuid4())
 
     loader = PyPDFLoader(file_path)
     pages = loader.load()
-
+    print("PDF loaded")
+    print(f"Total pages: {len(pages)}")
+    if len(pages) > 50:
+        raise ValueError("PDF too large")
     # 🔹 Clean text
     for page in pages:
         page.page_content = clean_text(page.page_content.replace("\n", " "))
 
     # 🔹 Better chunking
     text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=500, chunk_overlap=100, separators=["\n\n", "\n", ".", " ", ""]
+        chunk_size=400, chunk_overlap=50, separators=["\n\n", "\n", ".", " ", ""]
     )
 
     chunks = text_splitter.split_documents(pages)
+    print(f"Total chunks: {len(chunks)}")
 
     # 🔹 Add rich metadata
     for i, chunk in enumerate(chunks):
@@ -45,11 +51,9 @@ def ingest_pdf(file_path: str) -> str:
             }
         )
 
-    vectordb = Chroma(persist_directory=CHROMA_DIR, embedding_function=embeddings)
-
     try:
         print(f"Adding {len(chunks)} chunks")
-        BATCH_SIZE = 100
+        BATCH_SIZE = 10
         for i in range(0, len(chunks), BATCH_SIZE):
             batch = chunks[i : i + BATCH_SIZE]
             vectordb.add_documents(batch)
@@ -60,5 +64,15 @@ def ingest_pdf(file_path: str) -> str:
 
         traceback.print_exc()
         raise
+    finally:
+        try:
+            vectordb._client.reset()  # optional but helps
+        except:
+            pass
+
+        del vectordb
+        del pages
+        del chunks
+        gc.collect()
 
     return document_id
