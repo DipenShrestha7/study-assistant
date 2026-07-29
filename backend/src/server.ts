@@ -7,17 +7,18 @@ import { studyRoutes } from "./routes/studyRoutes.js";
 
 dotenv.config();
 
+const allowedOrigins = [
+  "https://study-assistant-self.vercel.app",
+  process.env.FRONTEND_URL,
+  "http://localhost:5173",
+  "http://0.0.0.0:8000",
+].filter((value): value is string => Boolean(value));
+
 const fastify = Fastify({ logger: true, bodyLimit: 52428800 }); // 50MB limit for file uploads
 
 // Bind necessary plugins sequentially
 await fastify.register(cors, {
   origin: (origin, cb) => {
-    const allowedOrigins = [
-      "https://study-assistant-self.vercel.app",
-      `${process.env.FRONTEND_URL}`,
-      "http://localhost:5173",
-      "http://0.0.0.0:8000",
-    ];
     if (!origin || allowedOrigins.includes(origin)) {
       cb(null, true);
     } else {

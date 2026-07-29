@@ -7,6 +7,21 @@ import {
 import documentModel from "../models/document.js";
 import messageModel from "../models/messages.js";
 
+const allowedOrigins = [
+  "https://study-assistant-self.vercel.app",
+  process.env.FRONTEND_URL,
+  "http://localhost:5173",
+  "http://0.0.0.0:8000",
+].filter((value): value is string => Boolean(value));
+
+function resolveRequestOrigin(origin: string | undefined) {
+  if (!origin || !allowedOrigins.includes(origin)) {
+    return allowedOrigins[0] ?? "*";
+  }
+
+  return origin;
+}
+
 /**
  * Handles incoming multipart file uploads, routes them to the AI pipeline,
  * and commits the metadata tracking ID to PostgreSQL.
@@ -37,10 +52,12 @@ export async function queryStudyMaterial(
   request: FastifyRequest<{ Body: { docId: number; question: string } }>,
   reply: FastifyReply,
 ) {
+  const responseOrigin = resolveRequestOrigin(request.headers.origin);
+
   if (request.method === "OPTIONS") {
     return reply
       .status(204)
-      .header("Access-Control-Allow-Origin", "http://localhost:5173")
+      .header("Access-Control-Allow-Origin", responseOrigin)
       .header("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
       .header("Access-Control-Allow-Headers", "Content-Type, Authorization")
       .send();
@@ -76,7 +93,7 @@ export async function queryStudyMaterial(
     reply.raw.setHeader("Connection", "keep-alive");
     reply.raw.setHeader("X-Accel-Buffering", "no");
 
-    reply.raw.setHeader("Access-Control-Allow-Origin", "http://localhost:5173");
+    reply.raw.setHeader("Access-Control-Allow-Origin", responseOrigin);
     reply.raw.setHeader("Access-Control-Allow-Methods", "POST, GET, OPTIONS");
     reply.raw.setHeader(
       "Access-Control-Allow-Headers",
