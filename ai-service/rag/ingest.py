@@ -29,7 +29,7 @@ def ingest_pdf(file_path: str) -> str:
 
     # 🔹 Better chunking
     text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=800, chunk_overlap=150, separators=["\n\n", "\n", ".", " ", ""]
+        chunk_size=500, chunk_overlap=100, separators=["\n\n", "\n", ".", " ", ""]
     )
 
     chunks = text_splitter.split_documents(pages)
@@ -47,6 +47,18 @@ def ingest_pdf(file_path: str) -> str:
 
     vectordb = Chroma(persist_directory=CHROMA_DIR, embedding_function=embeddings)
 
-    vectordb.add_documents(chunks)
+    try:
+        print(f"Adding {len(chunks)} chunks")
+        BATCH_SIZE = 100
+        for i in range(0, len(chunks), BATCH_SIZE):
+            batch = chunks[i : i + BATCH_SIZE]
+            vectordb.add_documents(batch)
+            print(f"Stored {i + len(batch)} chunks")
+        print("Successfully added documents")
+    except Exception as e:
+        import traceback
+
+        traceback.print_exc()
+        raise
 
     return document_id
