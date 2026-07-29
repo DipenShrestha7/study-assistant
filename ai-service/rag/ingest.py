@@ -2,6 +2,7 @@
 import uuid
 import re
 import gc
+import time
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_chroma import Chroma
@@ -19,60 +20,66 @@ def clean_text(text: str) -> str:
 
 
 def ingest_pdf(file_path: str) -> str:
-    vectordb = Chroma(persist_directory=CHROMA_DIR, embedding_function=embeddings)
-    document_id = str(uuid.uuid4())
+    print(f"Starting ingestion for {file_path}")
+    try:
+        vectordb = Chroma(persist_directory=CHROMA_DIR, embedding_function=embeddings)
+        document_id = str(uuid.uuid4())
 
-    loader = PyPDFLoader(file_path)
-    pages = loader.load()
-    print("PDF loaded")
-    print(f"Total pages: {len(pages)}")
-    if len(pages) > 50:
-        raise ValueError("PDF too large")
-    # 🔹 Clean text
-    for page in pages:
-        page.page_content = clean_text(page.page_content.replace("\n", " "))
+        loader = PyPDFLoader(file_path)
+        pages = loader.load()
+        print(f"PDF loaded: {file_path}")
+        print(f"Total pages: {len(pages)}")
+        if len(pages) > 50:
+            raise ValueError("PDF too large")
+        # 🔹 Clean text
+        for page in pages:
+            page.page_content = clean_text(page.page_content.replace("\n", " "))
 
-    # 🔹 Better chunking
-    text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=400, chunk_overlap=50, separators=["\n\n", "\n", ".", " ", ""]
-    )
-
-    chunks = text_splitter.split_documents(pages)
-    print(f"Total chunks: {len(chunks)}")
-
-    # 🔹 Add rich metadata
-    for i, chunk in enumerate(chunks):
-        chunk.metadata.update(
-            {
-                "document_id": document_id,
-                "chunk_id": i,
-                "source": file_path,
-                "page": chunk.metadata.get("page", None),
-            }
+        # 🔹 Better chunking
+        text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=400, chunk_overlap=50, separators=["\n\n", "\n", ".", " ", ""]
         )
 
-    try:
-        print(f"Adding {len(chunks)} chunks")
-        BATCH_SIZE = 10
-        for i in range(0, len(chunks), BATCH_SIZE):
-            batch = chunks[i : i + BATCH_SIZE]
-            vectordb.add_documents(batch)
-            print(f"Stored {i + len(batch)} chunks")
-        print("Successfully added documents")
-    except Exception as e:
-        import traceback
+        chunks = text_splitter.split_documents(pages)
+        print(f"Total chunks: {len(chunks)}")
 
-        traceback.print_exc()
-        raise
-    finally:
+        # 🔹 Add rich metadata
+        for i, chunk in enumerate(chunks):
+            chunk.metadata.update(
+                {
+                    "document_id": document_id,
+                    "chunk_id": i,
+                    "source": file_path,
+                    "page": chunk.metadata.get("page", None),
+                }
+            )
+
         try:
-            vectordb._client.reset()  # optional but helps
-        except:
-            pass
+            print(f"Adding {len(chunks)} chunks")
+            BATCH_SIZE = 2
+            for i in range(0, len(chunks), BATCH_SIZE):
+                batch = chunks[i : i + BATCH_SIZE]
+                vectordb.add_documents(batch)
+                time.sleep(0.2)
+                print(f"Stored {i + len(batch)} chunks")
+            print("Successfully added documents")
+        except Exception as e:
+            import traceback
 
-        del vectordb
-        del pages
-        del chunks
-        gc.collect()
+            traceback.print_exc()
+            raise
+        finally:
+            try:
+                vectordb._client.reset()  # optional but helps
+            except:
+                pass
 
-    return document_id
+            del vectordb
+            del pages
+            del chunks
+            gc.collect()
+
+        return document_id
+    except Exception as e:
+        print("❌ ERROR:", str(e))
+        raise e
