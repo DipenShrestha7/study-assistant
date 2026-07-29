@@ -13,9 +13,10 @@ const fastify = Fastify({ logger: true, bodyLimit: 52428800 }); // 50MB limit fo
 await fastify.register(cors, {
   origin: (origin, cb) => {
     const allowedOrigins = [
+      "https://study-assistant-self.vercel.app",
+      `${process.env.FRONTEND_URL}`,
       "http://localhost:5173",
       "http://0.0.0.0:8000",
-      `${process.env.FRONTEND_URL}`,
     ];
     if (!origin || allowedOrigins.includes(origin)) {
       cb(null, true);
