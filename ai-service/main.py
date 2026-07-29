@@ -6,6 +6,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, AliasChoices
 from dotenv import load_dotenv
 from typing import List, Dict, Optional
+from fastapi.middleware.cors import CORSMiddleware
 
 load_dotenv()
 
@@ -13,6 +14,17 @@ from rag.ingest import ingest_pdf
 from rag.query import create_query_response_generator
 
 app = FastAPI(title="AI Study Assistant Vector Service")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "https://study-assistant-self.vercel.app",
+        "http://localhost:5173",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 class QueryRequest(BaseModel):
